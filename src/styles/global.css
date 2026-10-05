@@ -1,0 +1,388 @@
+:root {
+  font-family: "IBM Plex Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: #182230;
+  background: #f4f6f8;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  --er-primary: #1677ff;
+  --er-success: #0f8a62;
+  --er-warning: #c46a00;
+  --er-danger: #c7362c;
+  --er-border: #dfe3e8;
+  --er-muted: #687386;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  min-width: 0;
+  background: #f4f6f8;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.page-title {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.25;
+  letter-spacing: 0;
+}
+
+.page-description {
+  margin: 6px 0 0;
+  color: var(--er-muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.panel {
+  border: 1px solid var(--er-border);
+  border-radius: 7px;
+  background: #fff;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 54px;
+  padding: 12px 16px;
+  border-bottom: 1px solid #e8ebef;
+}
+
+.panel-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.toolbar-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.toolbar-field {
+  display: grid;
+  gap: 6px;
+}
+
+.toolbar-field > span {
+  color: #596579;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.filter-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.metric {
+  min-height: 112px;
+  padding: 16px;
+  border: 1px solid var(--er-border);
+  border-radius: 7px;
+  background: #fff;
+}
+
+.metric-label {
+  color: #657185;
+  font-size: 13px;
+}
+
+.metric-value {
+  margin-top: 10px;
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.metric-note {
+  margin-top: 10px;
+  color: #7c8697;
+  font-size: 12px;
+}
+
+.muted {
+  color: var(--er-muted);
+}
+
+.danger-text {
+  color: var(--er-danger);
+}
+
+.mono {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+}
+
+.editor-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.editor-form .field-wide {
+  grid-column: 1 / -1;
+}
+
+.field {
+  display: grid;
+  gap: 7px;
+}
+
+.field > label {
+  color: #4b5669;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.validation-list {
+  display: grid;
+  gap: 10px;
+}
+
+.validation-item {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #e3e6eb;
+  border-radius: 6px;
+}
+
+.validation-dot {
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: var(--er-warning);
+}
+
+.validation-item.error .validation-dot {
+  background: var(--er-danger);
+}
+
+.validation-copy strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.validation-copy p {
+  margin: 0;
+  color: var(--er-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.empty-state {
+  padding: 32px;
+  color: #6c7688;
+  text-align: center;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 22px;
+}
+
+.detail-field dt {
+  margin-bottom: 5px;
+  color: #727d8e;
+  font-size: 12px;
+}
+
+.detail-field dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.action-stack {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.diff-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.diff-block {
+  padding: 14px;
+  border: 1px solid #e0e4e9;
+  border-radius: 6px;
+  background: #fafbfc;
+}
+
+.diff-block h4 {
+  margin: 0 0 10px;
+  font-size: 14px;
+}
+
+.diff-block ul {
+  margin: 0;
+  padding-left: 18px;
+  color: #4e5a6d;
+  line-height: 1.8;
+}
+
+@media (max-width: 1280px) {
+  .metrics-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .main-shell,
+  .content-shell,
+  .page {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .app-shell {
+    display: block !important;
+  }
+
+  .sidebar {
+    position: relative !important;
+    height: auto !important;
+    padding: 12px !important;
+  }
+
+  .brand {
+    padding-bottom: 10px !important;
+  }
+
+  .nav-list {
+    display: flex !important;
+    gap: 6px !important;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+
+  .nav-item {
+    flex: 0 0 auto;
+    min-width: max-content;
+  }
+
+  .sidebar-foot {
+    display: none !important;
+  }
+
+  .topbar {
+    position: relative !important;
+    height: auto !important;
+    min-height: 0 !important;
+    padding: 12px !important;
+    flex-direction: column;
+    align-items: stretch !important;
+    gap: 10px;
+  }
+
+  .topbar-actions {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: space-between;
+  }
+
+  .sync-state {
+    display: none !important;
+  }
+
+  .topbar-actions .t-button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .content-shell {
+    padding: 12px !important;
+  }
+
+  .page-title {
+    font-size: 21px;
+  }
+
+  .page-description {
+    overflow-wrap: anywhere;
+  }
+
+  .metrics-grid,
+  .dashboard-grid,
+  .event-workspace,
+  .lineage-summary,
+  .dependency-grid,
+  .validation-layout,
+  .release-overview,
+  .release-grid,
+  .review-columns,
+  .deprecation-grid,
+  .rollback-summary,
+  .rollback-main dl,
+  .export-layout,
+  .format-options,
+  .editor-form,
+  .diff-columns {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .tree-panel,
+  .sample-panel,
+  .export-options {
+    position: static !important;
+    max-height: none !important;
+  }
+
+  .toolbar-field,
+  .keyword-field,
+  .event-field,
+  .property-field,
+  .release-field {
+    width: 100%;
+    min-width: 0 !important;
+  }
+
+  .filter-actions {
+    width: 100%;
+    margin-left: 0;
+    justify-content: flex-end;
+  }
+
+  .editor-form .field-wide {
+    grid-column: auto;
+  }
+}

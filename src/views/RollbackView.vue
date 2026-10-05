@@ -20,6 +20,7 @@ const form = reactive({
   reason: '',
   scope: '',
   evidence: '',
+  failCommit: false,
 })
 const verifyForm = reactive({
   evidence: '',
@@ -37,6 +38,7 @@ const openRollback = (): void => {
   form.reason = ''
   form.scope = ''
   form.evidence = ''
+  form.failCommit = false
   rollbackVisible.value = true
 }
 
@@ -45,7 +47,22 @@ const execute = async (): Promise<void> => {
     await MessagePlugin.error('版本、回滚原因、影响范围和证据编号不能为空')
     return
   }
-  store.executeRollback(form.releaseId, form.reason, form.scope, form.evidence)
+  const ok = store.executeRollback(
+    form.releaseId,
+    form.reason,
+    form.scope,
+    form.evidence,
+    form.failCommit,
+  )
+  if (!ok) {
+    if (form.failCommit) {
+      form.failCommit = false
+      await MessagePlugin.warning('提交失败：回滚修订已保留，再次执行将从最后检查点恢复重放')
+      return
+    }
+    await MessagePlugin.error('只有已发布版本可以执行回滚')
+    return
+  }
   rollbackVisible.value = false
   await MessagePlugin.success('回滚指令已记录，请继续执行结果验证')
 }
@@ -88,6 +105,14 @@ const verify = async (): Promise<void> => {
           </t-button>
         </div>
       </div>
+      <t-alert
+        v-if="store.lastRecovery"
+        theme="warning"
+        class="recovery-alert"
+        :message="`已从最后完整检查点恢复 ${store.lastRecovery.kind === 'publish' ? '发布' : '回滚'} ${store.lastRecovery.version}：已写入修订保留，发布/回滚记录未重复生成。`"
+        close
+        @close="store.lastRecovery = null"
+      />
     </section>
 
     <div class="rollback-summary">
@@ -185,6 +210,10 @@ const verify = async (): Promise<void> => {
           <label>执行证据编号</label>
           <t-input v-model="form.evidence" />
         </div>
+        <label class="fail-toggle">
+          <t-checkbox v-model="form.failCommit" />
+          模拟提交失败（用于验证检查点恢复：修订已写入但提交未完成）
+        </label>
       </div>
       <div class="dialog-footer">
         <t-button variant="outline" @click="rollbackVisible = false">取消</t-button>
@@ -210,6 +239,18 @@ const verify = async (): Promise<void> => {
 </template>
 
 <style scoped>
+.recovery-alert {
+  margin-top: 14px;
+}
+
+.fail-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #7a6220;
+  font-size: 12px;
+}
+
 .filter-panel {
   padding: 14px 16px;
 }

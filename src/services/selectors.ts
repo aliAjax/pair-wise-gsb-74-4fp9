@@ -4,11 +4,13 @@ import type {
   EventProperty,
   EventVersionSnapshot,
   GovernanceState,
+  ReleaseBaselineSnapshot,
   ReleaseCandidate,
   SampleValidationResult,
   Severity,
   ValidationIssue,
 } from '@/models/domain'
+import { deepClone } from '@/services/repository'
 
 const NAMING_PATTERN = /^[a-z][a-z0-9_]{2,31}$/
 const normalize = (value: string): string =>
@@ -36,9 +38,11 @@ export const latestBaseline = (
     .filter((baseline) => baseline.eventId === eventId)
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0]
 
+type BaselineLike = EventVersionSnapshot | ReleaseBaselineSnapshot | undefined
+
 export const compareEventContract = (
   event: EventDefinition,
-  baseline?: EventVersionSnapshot,
+  baseline?: BaselineLike,
 ): ContractDifference => {
   const before = baseline?.properties ?? []
   const after = event.properties.filter((property) => !property.deletedAt)
@@ -100,6 +104,130 @@ export const contractDifferences = (
     })
     .filter((item): item is ContractDifference => Boolean(item))
 
+/** 冻结候选发布时所依据的事件基线；事件尚无已发布基线时以 null 记录空契约。 */
+export const captureReleaseBaselines = (
+  state: GovernanceState,
+  eventIds: string[],
+  capturedAt: string,
+): ReleaseBaselineSnapshot[] =>
+  eventIds
+    .map((eventId) => {
+      const baseline = latestBaseline(state.baselines, eventId)
+      return {
+        eventId,
+        baselineVersion: baseline?.version ?? null,
+        baselineId: baseline?.id ?? null,
+        properties: baseline ? deepClone(baseline.properties) : [],
+        capturedAt,
+      } satisfies ReleaseBaselineSnapshot
+    })
+
+const differencePropertyNames = (differences: ContractDifference[]): Map<string, string[]> => {
+  const map = new Map<string, string[]>()
+  differences.forEach((difference) => {
+    map.set(
+      difference.eventId,
+      [
+        ...difference.addedProperties,
+        ...difference.removedProperties,
+        ...difference.requiredChanges.map((item) => item.split(':')[0] ?? ''),
+        ...difference.typeChanges.map((item) => item.split(':')[0] ?? ''),
+        ...difference.enumChanges.map((item) => item.split(':')[0] ?? ''),
+      ].filter((name): name is string => Boolean(name)),
+    )
+  })
+  return map
+}
+
+/**
+ * 计算某个下游依赖在当前候选变化字段上的签名。
+ * 只纳入该依赖引用到、且本次发生变化的字段；基线变化导致签名改变时，
+ * 已通过的迁移确认必须退回待确认。
+ */
+export const dependencyChangeSignature = (
+  state: GovernanceState,
+  dependencyId: string,
+  differences: ContractDifference[],
+  snapshots: ReleaseBaselineSnapshot[] = [],
+): string => {
+  const dependency = state.dependencies.find((item) => item.id === dependencyId)
+  if (!dependency) return ''
+  const changedNamesByEvent = differencePropertyNames(differences)
+  const resolveName = (eventId: string, propertyId: string): string | undefined => {
+    const active = state.events
+      .find((event) => event.id === eventId)
+      ?.properties.find((property) => property.id === propertyId)
+    if (active) return active.name
+    const snapshot = snapshots.find((item) => item.eventId === eventId)
+    const inSnapshot = snapshot?.properties.find((property) => property.id === propertyId)
+    if (inSnapshot) return inSnapshot.name
+    return latestBaseline(state.baselines, eventId)?.properties.find(
+      (property) => property.id === propertyId,
+    )?.name
+  }
+  return dependency.propertyRefs
+    .map((reference) => {
+      const changed = changedNamesByEvent.get(reference.eventId) ?? []
+      const name = resolveName(reference.eventId, reference.propertyId)
+      return name && changed.includes(name) ? `${reference.eventId}:${name}` : null
+    })
+    .filter((token): token is string => Boolean(token))
+    .sort()
+    .join(',')
+}
+
+export interface ReleasePlan {
+  differences: ContractDifference[]
+  affectedDependencyIds: string[]
+  signatures: Map<string, string>
+}
+
+/**
+ * 以候选冻结的基线快照为基准重算发布计划；未冻结快照时回退到最新基线。
+ * 公开（已发布/已回滚）版本传入自身快照，比较结果永远不受基线移动影响。
+ */
+export const buildReleasePlan = (
+  state: GovernanceState,
+  eventIds: string[],
+  snapshots: ReleaseBaselineSnapshot[] = [],
+): ReleasePlan => {
+  const differences = eventIds
+    .map((eventId) => {
+      const event = state.events.find((item) => item.id === eventId)
+      if (!event) return null
+      const frozen = snapshots.find((snapshot) => snapshot.eventId === eventId)
+      const baseline = frozen ?? latestBaseline(state.baselines, eventId)
+      return compareEventContract(event, baseline)
+    })
+    .filter((item): item is ContractDifference => Boolean(item))
+
+  const changedNamesByEvent = differencePropertyNames(differences)
+  const affectedDependencyIds = state.dependencies
+    .filter((dependency) =>
+      dependency.propertyRefs.some((reference) => {
+        const changed = changedNamesByEvent.get(reference.eventId)
+        if (!changed || changed.length === 0) return false
+        const event = state.events.find((item) => item.id === reference.eventId)
+        const activeProperty = event?.properties.find((item) => item.id === reference.propertyId)
+        if (activeProperty) return changed.includes(activeProperty.name)
+        const frozen = snapshots.find((snapshot) => snapshot.eventId === reference.eventId)
+        const baselineProperty =
+          frozen?.properties.find((item) => item.id === reference.propertyId) ??
+          latestBaseline(state.baselines, reference.eventId)?.properties.find(
+            (item) => item.id === reference.propertyId,
+          )
+        return Boolean(baselineProperty && changed.includes(baselineProperty.name))
+      }),
+    )
+    .map((dependency) => dependency.id)
+
+  const signatures = new Map<string, string>()
+  affectedDependencyIds.forEach((dependencyId) => {
+    signatures.set(dependencyId, dependencyChangeSignature(state, dependencyId, differences, snapshots))
+  })
+  return { differences, affectedDependencyIds, signatures }
+}
+
 export const affectedDependencies = (
   state: GovernanceState,
   differences: ContractDifference[],
@@ -122,7 +250,12 @@ export const affectedDependencies = (
       dependency.propertyRefs.some((reference) => {
         const event = state.events.find((item) => item.id === reference.eventId)
         const property = event?.properties.find((item) => item.id === reference.propertyId)
-        return Boolean(property && changedPropertyNames.has(property.name))
+        if (property) return changedPropertyNames.has(property.name)
+        const baselineProperty = latestBaseline(
+          state.baselines,
+          reference.eventId,
+        )?.properties.find((item) => item.id === reference.propertyId)
+        return Boolean(baselineProperty && changedPropertyNames.has(baselineProperty.name))
       }),
     )
     .map((dependency) => dependency.id)
@@ -327,6 +460,15 @@ export const validateSample = (
   })
 
   return { valid: errors.length === 0, errors, warnings }
+}
+
+/** 候选必须为每个参与事件冻结过基线快照，旧候选需先补齐才允许发布。 */
+export const hasCompleteBaselineSnapshots = (release: ReleaseCandidate): boolean => {
+  const snapshots = release.baselineSnapshots ?? []
+  return (
+    release.eventIds.length > 0 &&
+    release.eventIds.every((eventId) => snapshots.some((snapshot) => snapshot.eventId === eventId))
+  )
 }
 
 export const releaseReadiness = (

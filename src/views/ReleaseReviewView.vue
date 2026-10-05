@@ -13,7 +13,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { useReleaseQuery, useReleasesQuery } from '@/composables/useGovernanceQueries'
 import type { ReleaseApproval } from '@/models/domain'
-import { releaseReadiness } from '@/services/selectors'
+import { hasCompleteBaselineSnapshots, releaseReadiness } from '@/services/selectors'
 import { useGovernanceStore } from '@/stores/governance'
 
 const store = useGovernanceStore()
@@ -33,6 +33,8 @@ const release = computed(
 )
 const releases = computed(() => releasesQuery.data.value ?? store.data.releases)
 const readiness = computed(() => (release.value ? releaseReadiness(release.value, store.issues) : 0))
+const baselineReady = computed(() => (release.value ? hasCompleteBaselineSnapshots(release.value) : false))
+const failNextCommit = ref(false)
 
 const createVisible = ref(false)
 const migrationVisible = ref(false)
@@ -160,12 +162,31 @@ const batchApprove = async (): Promise<void> => {
   await MessagePlugin.success('批量审批已提交')
 }
 
+const backfillBaselines = async (): Promise<void> => {
+  if (!release.value) return
+  if (!store.backfillReleaseBaselines(release.value.id)) return
+  await invalidate()
+  await MessagePlugin.success('已补齐事件契约基线快照，候选已按基线变化重算')
+}
+
 const publish = async (): Promise<void> => {
   if (!release.value) return
-  if (!store.publishRelease(release.value.id)) {
+  if (!hasCompleteBaselineSnapshots(release.value)) {
+    await MessagePlugin.error('旧候选缺少基线快照，请先补齐基线快照再发布')
+    return
+  }
+  const ok = store.publishRelease(release.value.id, failNextCommit.value)
+  if (!ok) {
+    if (failNextCommit.value) {
+      failNextCommit.value = false
+      await invalidate()
+      await MessagePlugin.warning('提交失败：修订已保留，再次操作将从最后检查点恢复重放')
+      return
+    }
     await MessagePlugin.error('迁移确认或四角色审批尚未完成，当前不可发布')
     return
   }
+  failNextCommit.value = false
   await invalidate()
   await MessagePlugin.success('事件契约版本已发布')
 }
@@ -230,6 +251,15 @@ const setApprovalChecked = (approvalId: string, checked: unknown): void => {
     </section>
 
     <template v-if="release">
+      <t-alert
+        v-if="store.lastRecovery"
+        theme="warning"
+        class="recovery-alert"
+        :message="`已从最后完整检查点恢复 ${store.lastRecovery.kind === 'publish' ? '发布' : '回滚'} ${store.lastRecovery.version}：检查点后写入的修订已保留，发布/回滚记录未重复生成。`"
+        close
+        @close="store.lastRecovery = null"
+      />
+
       <section class="release-overview">
         <div>
           <span>版本</span>
@@ -248,14 +278,20 @@ const setApprovalChecked = (approvalId: string, checked: unknown): void => {
           <span>发布就绪度</span>
           <strong>{{ readiness }}%</strong>
         </div>
-        <t-button
-          theme="primary"
-          :disabled="release.status === 'published' || release.status === 'rolled_back'"
-          @click="publish"
-        >
-          发布契约
-          <template #suffix><ChevronRightIcon /></template>
-        </t-button>
+        <div class="publish-cell">
+          <t-button
+            theme="primary"
+            :disabled="!baselineReady || release.status === 'published' || release.status === 'rolled_back'"
+            @click="publish"
+          >
+            发布契约
+            <template #suffix><ChevronRightIcon /></template>
+          </t-button>
+          <label v-if="release.status === 'reviewing'" class="fail-toggle">
+            <t-checkbox v-model="failNextCommit" />
+            模拟提交失败
+          </label>
+        </div>
       </section>
 
       <div class="release-grid">
@@ -325,6 +361,26 @@ const setApprovalChecked = (approvalId: string, checked: unknown): void => {
               <div>
                 <strong>契约差异已生成</strong>
                 <span>{{ release.differences.length }} 个事件参与比较</span>
+              </div>
+            </div>
+            <div class="gate-row">
+              <CheckCircleIcon :class="{ pending: !baselineReady }" />
+              <div class="baseline-gate">
+                <strong>事件契约基线快照</strong>
+                <span v-if="baselineReady">
+                  {{ release.baselineSnapshots?.length ?? 0 }}/{{ release.eventIds.length }} 个事件基线已冻结
+                  <template v-if="release.recomputedAt">· 最近重算 {{ release.recomputedAt }}</template>
+                </span>
+                <span v-else>旧候选缺少基线快照，需先补齐后才允许发布</span>
+                <t-button
+                  v-if="!baselineReady"
+                  variant="outline"
+                  size="small"
+                  class="backfill-button"
+                  @click="backfillBaselines"
+                >
+                  补齐基线快照
+                </t-button>
               </div>
             </div>
             <div class="gate-row">
@@ -500,12 +556,41 @@ const setApprovalChecked = (approvalId: string, checked: unknown): void => {
 </template>
 
 <style scoped>
+.recovery-alert {
+  margin-bottom: 16px;
+}
+
 .filter-panel {
   padding: 14px 16px;
 }
 
 .release-field {
   min-width: 390px;
+}
+
+.publish-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 8px;
+}
+
+.fail-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: #7a6220;
+  font-size: 11px;
+}
+
+.baseline-gate {
+  display: grid;
+  gap: 6px;
+}
+
+.backfill-button {
+  justify-self: start;
 }
 
 .release-overview {

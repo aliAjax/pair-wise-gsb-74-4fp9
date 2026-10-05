@@ -883,6 +883,17 @@ const releases: ReleaseCandidate[] = [
     eventIds: ['evt-002', 'evt-004', 'evt-006'],
     affectedDependencyIds: ['dep-002', 'dep-003'],
     differences: [],
+    // 公开版本冻结发布时的基线快照，基线后续移动也不改变该版本的比较基准
+    baselineSnapshots: ['evt-002', 'evt-004', 'evt-006'].map((eventId) => {
+      const baseline = baselines.find((item) => item.eventId === eventId)!
+      return {
+        eventId,
+        baselineVersion: baseline.version,
+        baselineId: baseline.id,
+        properties: structuredClone(baseline.properties),
+        capturedAt: '2026-08-25T09:00:00+08:00',
+      }
+    }),
     migrationConfirmations: [
       {
         id: 'mig-005',
@@ -981,8 +992,11 @@ const audit: AuditEvent[] = [
   },
 ]
 
-export const createSeedState = (): GovernanceState => ({
-  events,
+export const createSeedState = (): GovernanceState =>
+  // 每次返回独立深拷贝，避免调用方修改污染模块级种子数据
+  JSON.parse(
+    JSON.stringify({
+      events,
   scenarios: [
     {
       id: 'scn-001',
@@ -1050,6 +1064,8 @@ export const createSeedState = (): GovernanceState => ({
       evidence: 'RPT-INCIDENT-8821 / MOBILE-REL-2026-0819',
     },
   ],
+  releaseJournal: [],
   audit,
   currentVersion: '2026.10.0',
-})
+  }),
+  )

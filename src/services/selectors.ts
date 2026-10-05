@@ -42,6 +42,18 @@ export const compareEventContract = (
 ): ContractDifference => {
   const before = baseline?.properties ?? []
   const after = event.properties.filter((property) => !property.deletedAt)
+  // 无基线时视为首次锚定：以当前契约为基准，不产生差异
+  if (!baseline) {
+    return {
+      eventId: event.id,
+      eventKey: event.key,
+      addedProperties: [],
+      removedProperties: [],
+      requiredChanges: [],
+      typeChanges: [],
+      enumChanges: [],
+    }
+  }
   const beforeMap = new Map(before.map((property) => [property.id, property]))
   const afterMap = new Map(after.map((property) => [property.id, property]))
   const addedProperties: string[] = []

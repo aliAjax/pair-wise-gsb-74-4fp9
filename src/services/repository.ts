@@ -1,5 +1,6 @@
 import type { GovernanceState } from '@/models/domain'
 import { createSeedState } from '@/models/seed'
+import { clearCommitJournal } from '@/services/commitLog'
 
 const STORAGE_KEY = 'eventrail-governance-v1'
 
@@ -25,6 +26,7 @@ export const saveState = (state: GovernanceState): void => {
 
 export const resetState = (): GovernanceState => {
   const seed = createSeedState()
+  clearCommitJournal()
   saveState(seed)
   return seed
 }

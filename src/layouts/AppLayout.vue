@@ -93,6 +93,22 @@ const reset = (): void => {
         </div>
       </header>
       <section class="content-shell">
+        <t-alert
+          v-if="store.recoveryInfo"
+          theme="warning"
+          class="recovery-banner"
+          :message="`提交「${store.recoveryInfo.action}」曾在检查点后中断，已从最后一个完整检查点 ${store.recoveryInfo.checkpointId.slice(
+            0,
+            18,
+          )} 恢复，重放 ${store.recoveryInfo.revisionCount} 条修订。`"
+        >
+          <template #operation>
+            <span class="recovery-detail">
+              发布记录重复：{{ store.recoveryInfo.duplicateReleaseCreated ? '是（异常）' : '否' }} ·
+              回滚记录重复：{{ store.recoveryInfo.duplicateRollbackCreated ? '是（异常）' : '否' }}
+            </span>
+          </template>
+        </t-alert>
         <RouterView />
       </section>
     </main>
@@ -250,5 +266,14 @@ const reset = (): void => {
 .content-shell {
   max-width: 1560px;
   padding: 24px;
+}
+
+.recovery-banner {
+  margin-bottom: 14px;
+}
+
+.recovery-detail {
+  color: #717c8e;
+  font-size: 11px;
 }
 </style>

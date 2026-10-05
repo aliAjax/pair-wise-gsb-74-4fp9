@@ -6,9 +6,17 @@ import 'tdesign-vue-next/es/style/index.css'
 import './styles/global.css'
 import App from './App.vue'
 import router from './router'
+import { useGovernanceStore } from './stores/governance'
 
-createApp(App)
-  .use(createPinia())
+const pinia = createPinia()
+const app = createApp(App)
+
+app.use(pinia)
+
+// 挂载前先恢复未完成提交（从最后一个完整检查点重放），再对齐未发布候选与基线
+useGovernanceStore(pinia).bootstrap()
+
+app
   .use(router)
   .use(VueQueryPlugin, {
     queryClientConfig: {

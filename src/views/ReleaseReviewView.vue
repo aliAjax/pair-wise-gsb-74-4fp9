@@ -13,6 +13,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { useReleaseQuery, useReleasesQuery } from '@/composables/useGovernanceQueries'
 import type { ReleaseApproval } from '@/models/domain'
+import { releaseMissingBaselineEventIds } from '@/services/reconcile'
 import { releaseReadiness } from '@/services/selectors'
 import { useGovernanceStore } from '@/stores/governance'
 
@@ -33,6 +34,19 @@ const release = computed(
 )
 const releases = computed(() => releasesQuery.data.value ?? store.data.releases)
 const readiness = computed(() => (release.value ? releaseReadiness(release.value, store.issues) : 0))
+
+const missingBaselineEventIds = computed(() =>
+  release.value ? releaseMissingBaselineEventIds(release.value) : [],
+)
+const resetConfirmations = computed(
+  () =>
+    release.value?.migrationConfirmations.filter(
+      (item) => item.status === 'pending' && item.resetAt,
+    ) ?? [],
+)
+const isFrozen = computed(
+  () => release.value?.status === 'published' || release.value?.status === 'rolled_back',
+)
 
 const createVisible = ref(false)
 const migrationVisible = ref(false)
@@ -80,10 +94,26 @@ const createRelease = async (): Promise<void> => {
     return
   }
   const created = store.createRelease(createForm.version, createForm.title, createForm.eventIds)
+  if (!created) {
+    await MessagePlugin.error('候选创建事务在检查点处中断，已从最后完整检查点恢复，请重试')
+    await invalidate()
+    return
+  }
   releaseId.value = created.id
   createVisible.value = false
   await invalidate()
-  await MessagePlugin.success('发布候选已创建，已生成下游迁移清单')
+  await MessagePlugin.success('发布候选已创建，已冻结基线快照并生成下游迁移清单')
+}
+
+const backfillBaselines = async (): Promise<void> => {
+  if (!release.value) return
+  const ok = store.backfillReleaseBaselines(release.value.id)
+  await invalidate()
+  if (ok) {
+    await MessagePlugin.success('基线快照已补齐，候选差异已按补齐基线重算，可以继续发布')
+  } else {
+    await MessagePlugin.error('补齐事务中断，已从检查点恢复，请重试')
+  }
 }
 
 const openMigration = (confirmationId: string): void => {
@@ -102,12 +132,12 @@ const confirmMigration = async (): Promise<void> => {
     await MessagePlugin.error('确认人和迁移说明不能为空')
     return
   }
-  store.confirmMigration(
-    release.value.id,
-    migrationForm.confirmationId,
-    migrationForm.reviewer,
-    migrationForm.note,
-  )
+  if (!store.confirmMigration(release.value.id, migrationForm.confirmationId, migrationForm.reviewer, migrationForm.note)) {
+    migrationVisible.value = false
+    await invalidate()
+    await MessagePlugin.error('迁移确认提交中断，已从检查点恢复，请重试')
+    return
+  }
   migrationVisible.value = false
   await invalidate()
   await MessagePlugin.success('下游迁移已确认')
@@ -124,7 +154,7 @@ const submitApproval = async (status: ReleaseApproval['status']): Promise<void> 
     await MessagePlugin.error('审批意见不能为空')
     return
   }
-  store.updateApproval(
+  const ok = store.updateApproval(
     release.value.id,
     singleApproval.value.role,
     status,
@@ -133,7 +163,11 @@ const submitApproval = async (status: ReleaseApproval['status']): Promise<void> 
   )
   approvalVisible.value = false
   await invalidate()
-  await MessagePlugin.success(status === 'approved' ? '审批已通过' : '审批已驳回')
+  if (ok) {
+    await MessagePlugin.success(status === 'approved' ? '审批已通过' : '审批已驳回')
+  } else {
+    await MessagePlugin.error('审批提交中断，已从检查点恢复，请重试')
+  }
 }
 
 const batchApprove = async (): Promise<void> => {
@@ -142,18 +176,23 @@ const batchApprove = async (): Promise<void> => {
     await MessagePlugin.error('请选择审批项并填写批量审批意见')
     return
   }
-  selectedApprovalIds.value.forEach((id) => {
+  for (const id of [...selectedApprovalIds.value]) {
     const approval = release.value?.approvals.find((item) => item.id === id)
     if (approval) {
-      store.updateApproval(
+      const ok = store.updateApproval(
         release.value!.id,
         approval.role,
         'approved',
         approval.actor,
         approvalComment.value,
       )
+      if (!ok) {
+        await invalidate()
+        await MessagePlugin.error('批量审批在检查点处中断，已写入的审批保留，其余请重新提交')
+        return
+      }
     }
-  })
+  }
   selectedApprovalIds.value = []
   approvalComment.value = ''
   await invalidate()
@@ -162,12 +201,23 @@ const batchApprove = async (): Promise<void> => {
 
 const publish = async (): Promise<void> => {
   if (!release.value) return
-  if (!store.publishRelease(release.value.id)) {
-    await MessagePlugin.error('迁移确认或四角色审批尚未完成，当前不可发布')
+  const result = store.publishRelease(release.value.id)
+  await invalidate()
+  if (result.ok) {
+    await MessagePlugin.success('事件契约版本已发布，基线快照已随发布落盘')
     return
   }
-  await invalidate()
-  await MessagePlugin.success('事件契约版本已发布')
+  if (result.reason === 'missing_baseline') {
+    await MessagePlugin.warning(
+      `该候选缺少 ${result.missingEventIds?.length ?? 0} 个事件的基线快照，请先补齐再发布`,
+    )
+    return
+  }
+  if (result.reason === 'crashed') {
+    await MessagePlugin.error('发布事务在检查点处中断，已从最后完整检查点恢复，发布记录未重复生成')
+    return
+  }
+  await MessagePlugin.error('迁移确认或四角色审批尚未完成，当前不可发布')
 }
 
 const downloadDiff = (): void => {
@@ -230,6 +280,33 @@ const setApprovalChecked = (approvalId: string, checked: unknown): void => {
     </section>
 
     <template v-if="release">
+      <t-alert
+        v-if="missingBaselineEventIds.length > 0 && !isFrozen"
+        theme="warning"
+        class="chain-alert"
+        :message="`候选缺少 ${missingBaselineEventIds.length} 个事件的基线快照（${missingBaselineEventIds
+          .map(eventName)
+          .join('、')}），旧候选必须先补齐基线才允许发布。`"
+      >
+        <template #operation>
+          <t-button theme="warning" size="small" @click="backfillBaselines">补齐基线快照</t-button>
+        </template>
+      </t-alert>
+      <t-alert
+        v-if="resetConfirmations.length > 0"
+        theme="warning"
+        class="chain-alert"
+        :message="`事件契约基线已变化，${resetConfirmations.length} 个已通过的下游迁移确认按变化字段退回待确认。`"
+        close
+      />
+      <t-alert
+        v-if="isFrozen"
+        theme="success"
+        class="chain-alert"
+        message="该版本已冻结：公开发布保留原基线快照，后续基线变化不触发重算，仅可在回滚台账中留痕。"
+        close
+      />
+
       <section class="release-overview">
         <div>
           <span>版本</span>
@@ -250,7 +327,7 @@ const setApprovalChecked = (approvalId: string, checked: unknown): void => {
         </div>
         <t-button
           theme="primary"
-          :disabled="release.status === 'published' || release.status === 'rolled_back'"
+          :disabled="isFrozen || missingBaselineEventIds.length > 0"
           @click="publish"
         >
           发布契约
@@ -330,6 +407,19 @@ const setApprovalChecked = (approvalId: string, checked: unknown): void => {
             <div class="gate-row">
               <CheckCircleIcon
                 :class="{
+                  pending: release.eventIds.length !== (release.baselineRefs?.length ?? 0),
+                }"
+              />
+              <div>
+                <strong>事件契约基线锚定</strong>
+                <span>
+                  {{ release.baselineRefs?.length ?? 0 }}/{{ release.eventIds.length }} 个事件已冻结基线快照
+                </span>
+              </div>
+            </div>
+            <div class="gate-row">
+              <CheckCircleIcon
+                :class="{
                   pending: release.migrationConfirmations.some((item) => item.status !== 'confirmed'),
                 }"
               />
@@ -382,13 +472,17 @@ const setApprovalChecked = (approvalId: string, checked: unknown): void => {
               </div>
               <StatusTag :value="confirmation.status" />
               <p>{{ confirmation.note || '尚未填写迁移确认说明。' }}</p>
+              <p v-if="confirmation.resetNote" class="reset-note">{{ confirmation.resetNote }}</p>
+              <small v-if="confirmation.changedFields && confirmation.changedFields.length" class="changed-fields">
+                覆盖变化字段：{{ confirmation.changedFields.join('、') }}
+              </small>
               <t-button
                 variant="outline"
                 size="small"
                 :disabled="confirmation.status === 'confirmed'"
                 @click="openMigration(confirmation.id)"
               >
-                确认迁移
+                {{ confirmation.resetAt ? '重新确认迁移' : '确认迁移' }}
               </t-button>
             </article>
           </div>
@@ -500,6 +594,21 @@ const setApprovalChecked = (approvalId: string, checked: unknown): void => {
 </template>
 
 <style scoped>
+.chain-alert {
+  margin-bottom: 12px;
+}
+
+.reset-note {
+  color: #b45309 !important;
+}
+
+.changed-fields {
+  grid-column: 1 / -1;
+  color: #8a94a6;
+  font-size: 10px;
+  word-break: break-all;
+}
+
 .filter-panel {
   padding: 14px 16px;
 }

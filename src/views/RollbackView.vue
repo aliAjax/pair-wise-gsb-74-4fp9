@@ -45,9 +45,13 @@ const execute = async (): Promise<void> => {
     await MessagePlugin.error('版本、回滚原因、影响范围和证据编号不能为空')
     return
   }
-  store.executeRollback(form.releaseId, form.reason, form.scope, form.evidence)
+  const ok = store.executeRollback(form.releaseId, form.reason, form.scope, form.evidence)
   rollbackVisible.value = false
-  await MessagePlugin.success('回滚指令已记录，请继续执行结果验证')
+  if (ok) {
+    await MessagePlugin.success('回滚指令已记录，请继续执行结果验证')
+  } else {
+    await MessagePlugin.error('回滚提交在检查点处中断，已从最后完整检查点恢复，回滚记录未重复生成')
+  }
 }
 
 const openVerify = (rollbackId: string): void => {
@@ -61,9 +65,29 @@ const verify = async (): Promise<void> => {
     await MessagePlugin.error('验证证据不能为空')
     return
   }
-  store.verifyRollback(selectedRollbackId.value, verifyForm.evidence)
+  const ok = store.verifyRollback(selectedRollbackId.value, verifyForm.evidence)
   verifyVisible.value = false
-  await MessagePlugin.success('回滚验证结果已记录')
+  if (ok) {
+    await MessagePlugin.success('回滚验证结果已记录')
+  } else {
+    await MessagePlugin.error('验证提交中断，已从检查点恢复，请重试')
+  }
+}
+
+const runCrashDrill = async (): Promise<void> => {
+  const result = store.runCommitCrashDrill()
+  if (!result.armed || !result.recovered) {
+    await MessagePlugin.error('演练未按预期中断，请检查提交日志')
+    return
+  }
+  const report = result.recovered
+  if (report.duplicateReleaseCreated || report.duplicateRollbackCreated) {
+    await MessagePlugin.error('恢复后检测到重复的发布/回滚记录，恢复链异常')
+  } else {
+    await MessagePlugin.success(
+      `已从检查点 ${report.checkpointId.slice(0, 18)} 恢复，重放 ${report.revisionCount} 条修订，发布/回滚记录均无重复`,
+    )
+  }
 }
 </script>
 
@@ -82,6 +106,10 @@ const verify = async (): Promise<void> => {
           <p class="page-description">回滚是独立审计记录，不删除原发布版本和下游迁移确认。</p>
         </div>
         <div class="filter-actions">
+          <t-button variant="outline" @click="runCrashDrill">
+            <template #icon><HistoryIcon /></template>
+            提交中断恢复演练
+          </t-button>
           <t-button theme="danger" @click="openRollback">
             <template #icon><RollbackIcon /></template>
             执行回滚
